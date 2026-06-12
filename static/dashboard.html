@@ -1,0 +1,189 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrueGraph — Shadow Mode Dashboard</title>
+<style>
+  :root { --bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#8892a4;--accent:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--blue:#3b82f6; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:14px}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;gap:16px}
+  header h1{font-size:18px;font-weight:700}
+  .mode-badge{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;text-transform:uppercase}
+  .mode-shadow{background:#1e3a5f;color:#60a5fa}.mode-warn{background:#3b2200;color:#f59e0b}.mode-enforce{background:#3b0000;color:#ef4444}
+  .refresh-btn{margin-left:auto;padding:6px 14px;background:var(--accent);border:none;border-radius:6px;color:white;cursor:pointer}
+  .stats-row{display:flex;gap:16px;padding:20px 24px;flex-wrap:wrap}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;min-width:140px;flex:1}
+  .stat-card .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .stat-card .value{font-size:28px;font-weight:700}.stat-card .sub{color:var(--muted);font-size:11px;margin-top:4px}
+  .val-red{color:var(--red)}.val-green{color:var(--green)}.val-blue{color:var(--blue)}.val-yellow{color:var(--yellow)}
+  .controls{padding:0 24px 16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .controls select,.controls input[type=text]{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px}
+  .controls label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;cursor:pointer}
+  .tabs{display:flex;gap:4px;padding:0 24px 16px}
+  .tab{padding:6px 16px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;cursor:pointer}
+  .tab.active{background:var(--accent);color:white;border-color:var(--accent)}
+  .section{padding:0 24px 24px}
+  .section-title{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+  thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--bg)}
+  tbody tr{border-bottom:1px solid var(--border)}.tbody tr:last-child{border-bottom:none}
+  tbody tr:hover{background:rgba(99,102,241,.06)}
+  tbody td{padding:10px 12px}
+  .badge{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+  .badge-flag{background:rgba(239,68,68,.15);color:var(--red)}.badge-pass{background:rgba(34,197,94,.12);color:var(--green)}
+  .badge-nocpp{background:rgba(245,158,11,.15);color:var(--yellow)}
+  .score-bar{display:flex;align-items:center;gap:8px}
+  .score-bar .bar{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+  .score-bar .fill{height:100%;border-radius:3px}
+  .score-bar .num{font-size:12px;font-family:monospace;width:40px}
+  .fb-btn{padding:2px 7px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;cursor:pointer;margin-right:3px}
+  .fb-btn:hover{border-color:var(--accent);color:var(--text)}
+  .fb-btn.active-tp{border-color:var(--red);color:var(--red);background:rgba(239,68,68,.1)}
+  .fb-btn.active-fp{border-color:var(--green);color:var(--green);background:rgba(34,197,94,.1)}
+  .fb-btn.active-inc{border-color:var(--muted);color:var(--muted);background:rgba(148,163,184,.1)}
+  .email-cell{font-family:monospace;font-size:12px;color:var(--blue)}
+  .exp-ok{color:var(--green)}.exp-warn{color:var(--yellow)}.exp-bad{color:var(--red)}
+  .empty-state{padding:40px;text-align:center;color:var(--muted)}
+  .last-updated{color:var(--muted);font-size:11px;margin-left:auto}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>TrueGraph</h1><div style="color:var(--muted);font-size:11px;margin-top:2px">Shadow Mode &bull; Chimera Secured</div></div>
+  <div id="mode-badge" class="mode-badge mode-shadow">shadow</div>
+  <span id="last-updated" class="last-updated">&ndash;</span>
+  <button class="refresh-btn" onclick="loadAll()">&#8635; Refresh</button>
+</header>
+<div class="stats-row">
+  <div class="stat-card"><div class="label">Total Scored</div><div class="value" id="s-total">-</div><div class="sub" id="s-window">last 7 days</div></div>
+  <div class="stat-card"><div class="label">Flagged</div><div class="value val-red" id="s-flagged">-</div><div class="sub" id="s-flagrate">-</div></div>
+  <div class="stat-card"><div class="label">Passed</div><div class="value val-green" id="s-passed">-</div><div class="sub">authentic</div></div>
+  <div class="stat-card"><div class="label">No CPP</div><div class="value val-yellow" id="s-nocpp">-</div><div class="sub">unknown senders</div></div>
+  <div class="stat-card"><div class="label">Active Inboxes</div><div class="value val-blue" id="s-subs">-</div><div class="sub">subscribed</div></div>
+  <div class="stat-card"><div class="label">Feedback</div><div class="value" id="s-feedback">-</div><div class="sub">TP / FP labeled</div></div>
+</div>
+<div class="tabs">
+  <button class="tab active" onclick="showTab('log',this)">Shadow Log</button>
+  <button class="tab" onclick="showTab('subs',this)">Subscriptions</button>
+</div>
+<div id="tab-log">
+  <div class="controls">
+    <select id="days-select" onchange="loadAll()">
+      <option value="1">Last 24h</option><option value="7" selected>Last 7 days</option>
+      <option value="30">Last 30 days</option><option value="90">Last 90 days</option>
+    </select>
+    <label><input type="checkbox" id="flagged-only" onchange="loadLog()"> Flagged only</label>
+    <input type="text" id="filter-inbox" placeholder="Filter inbox..." style="width:200px" oninput="loadLog()">
+    <input type="text" id="filter-sender" placeholder="Filter sender..." style="width:200px" oninput="loadLog()">
+  </div>
+  <div class="section">
+    <div class="section-title">Scored Emails</div>
+    <table><thead><tr>
+      <th>Time</th><th>Inbox</th><th>Sender</th><th>p_authentic</th><th>Conf</th><th>Source</th><th>Verdict</th><th>Feedback</th>
+    </tr></thead><tbody id="log-body"><tr><td colspan="8" class="empty-state">Loading...</td></tr></tbody></table>
+  </div>
+</div>
+<div id="tab-subs" style="display:none">
+  <div class="section">
+    <div class="section-title">Active Graph Subscriptions</div>
+    <table><thead><tr><th>Inbox</th><th>Subscription ID</th><th>Expires</th><th>Resource</th></tr></thead>
+    <tbody id="subs-body"><tr><td colspan="4" class="empty-state">Loading...</td></tr></tbody></table>
+  </div>
+</div>
+<script>
+const API='';
+function showTab(name,btn){
+  document.getElementById('tab-log').style.display=name==='log'?'':'none';
+  document.getElementById('tab-subs').style.display=name==='subs'?'':'none';
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  if(name==='subs')loadSubs();
+}
+function days(){return document.getElementById('days-select').value}
+function flaggedOnly(){return document.getElementById('flagged-only').checked}
+function filterInbox(){return document.getElementById('filter-inbox').value.trim()}
+function filterSender(){return document.getElementById('filter-sender').value.trim()}
+
+async function loadStats(){
+  try{
+    const s=await fetch(`${API}/admin/stats?days=${days()}`).then(r=>r.json());
+    document.getElementById('s-total').textContent=s.total_scored.toLocaleString();
+    document.getElementById('s-flagged').textContent=s.flagged.toLocaleString();
+    document.getElementById('s-flagrate').textContent=(s.flag_rate*100).toFixed(1)+'% flag rate';
+    document.getElementById('s-passed').textContent=s.passed.toLocaleString();
+    document.getElementById('s-nocpp').textContent=s.no_cpp_senders.toLocaleString();
+    document.getElementById('s-subs').textContent=s.active_subscriptions.toLocaleString();
+    document.getElementById('s-feedback').textContent=s.feedback_tp+' TP / '+s.feedback_fp+' FP';
+    document.getElementById('s-window').textContent='last '+days()+' days';
+    const b=document.getElementById('mode-badge');
+    b.textContent=s.mode;b.className='mode-badge mode-'+s.mode;
+  }catch(e){console.error('stats',e)}
+}
+
+async function loadLog(){
+  const tb=document.getElementById('log-body');
+  tb.innerHTML='<tr><td colspan="8" class="empty-state">Loading...</td></tr>';
+  try{
+    let url=`${API}/admin/shadow-log?days=${days()}&limit=500`;
+    if(flaggedOnly())url+='&flagged_only=true';
+    if(filterInbox())url+='&user_email='+encodeURIComponent(filterInbox());
+    if(filterSender())url+='&sender_email='+encodeURIComponent(filterSender());
+    const rows=await fetch(url).then(r=>r.json());
+    if(!rows.length){tb.innerHTML='<tr><td colspan="8" class="empty-state">No records</td></tr>';return}
+    tb.innerHTML=rows.map(r=>{
+      const pct=Math.round(r.p_authentic*100);
+      const bc=r.flagged?'#ef4444':'#22c55e';
+      const ts=r.scored_at?new Date(r.scored_at).toLocaleString():'-';
+      const v=r.flagged?'<span class="badge badge-flag">FLAG</span>':'<span class="badge badge-pass">PASS</span>';
+      const src=r.tw_source==='no_cpp'?'<span class="badge badge-nocpp">no_cpp</span>':'<span style="color:var(--muted);font-size:12px">'+r.tw_source+'</span>';
+      const fb='<button class="fb-btn '+(r.feedback==='TP'?'active-tp':'')+'" onclick="setFb('+r.id+',\'TP\',this)">TP</button>'
+              +'<button class="fb-btn '+(r.feedback==='FP'?'active-fp':'')+'" onclick="setFb('+r.id+',\'FP\',this)">FP</button>'
+              +'<button class="fb-btn '+(r.feedback==='inconclusive'?'active-inc':'')+'" onclick="setFb('+r.id+',\'inconclusive\',this)">?</button>';
+      return '<tr><td style="font-size:12px;color:var(--muted);white-space:nowrap">'+ts+'</td>'
+        +'<td class="email-cell">'+r.user_email+'</td><td class="email-cell">'+r.sender_email+'</td>'
+        +'<td><div class="score-bar"><div class="bar"><div class="fill" style="width:'+pct+'%;background:'+bc+'"></div></div>'
+        +'<span class="num">'+r.p_authentic.toFixed(3)+'</span></div></td>'
+        +'<td style="font-family:monospace;font-size:12px">'+r.confidence.toFixed(2)+'</td>'
+        +'<td>'+src+'</td><td>'+v+'</td><td>'+fb+'</td></tr>';
+    }).join('');
+  }catch(e){tb.innerHTML='<tr><td colspan="8" class="empty-state">Error: '+e.message+'</td></tr>'}
+}
+
+async function setFb(id,val,btn){
+  try{
+    await fetch(`${API}/admin/feedback/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback:val})});
+    const row=btn.closest('tr');
+    row.querySelectorAll('.fb-btn').forEach(b=>b.classList.remove('active-tp','active-fp','active-inc'));
+    btn.classList.add(val==='TP'?'active-tp':val==='FP'?'active-fp':'active-inc');
+  }catch(e){alert('Failed: '+e.message)}
+}
+
+async function loadSubs(){
+  const tb=document.getElementById('subs-body');
+  try{
+    const rows=await fetch(`${API}/admin/subscriptions`).then(r=>r.json());
+    if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="empty-state">No active subscriptions</td></tr>';return}
+    const now=Date.now();
+    tb.innerHTML=rows.map(s=>{
+      const exp=new Date(s.expiration_dt);
+      const h=(exp-now)/3600000;
+      const c=h<6?'exp-bad':h<24?'exp-warn':'exp-ok';
+      return '<tr><td class="email-cell">'+s.user_email+'</td>'
+        +'<td style="font-family:monospace;font-size:11px;color:var(--muted)">'+s.subscription_id+'</td>'
+        +'<td class="'+c+'">'+exp.toLocaleString()+' <span style="font-size:11px">('+h.toFixed(0)+'h)</span></td>'
+        +'<td style="font-size:11px;color:var(--muted)">'+s.resource+'</td></tr>';
+    }).join('');
+  }catch(e){tb.innerHTML='<tr><td colspan="4" class="empty-state">Error: '+e.message+'</td></tr>'}
+}
+
+async function loadAll(){
+  await Promise.all([loadStats(),loadLog()]);
+  document.getElementById('last-updated').textContent='Updated '+new Date().toLocaleTimeString();
+}
+
+loadAll();
+setInterval(loadAll,60000);
+</script>
+</body></html>
