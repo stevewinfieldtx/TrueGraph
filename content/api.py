@@ -46,6 +46,21 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "qwen/qwen-2.5-72b-instruct")
 
+# Win/loss outcome intelligence (ported from the retired CPP-Engine).
+# Needs DATABASE_URL; without it these endpoints 503 and graph compute
+# is unaffected.
+import outcomes as _outcomes
+app.include_router(_outcomes.router)
+
+@app.on_event("startup")
+def _init_outcomes_schema():
+    if os.getenv("DATABASE_URL", ""):
+        try:
+            _outcomes.init_schema()
+        except Exception as e:
+            # Outcome layer is additive — never block graph compute on it
+            print(f"[outcomes] schema init failed: {e}")
+
 
 # ── Request Models ──────────────────────────────────────────
 
