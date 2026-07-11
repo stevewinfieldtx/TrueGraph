@@ -6,16 +6,16 @@ Judgment: win-attribution, combination analytics — "keeping up with how
 things do when they win or lose." This module is that memory:
 
   contacts        — people we exchange email with, keyed by address
-  profiles_s      — CPP-S: how a CUSTOMER communicates across deals
   deal_outcomes   — what happened and why, with the communication
                     fingerprint at close (the learning layer)
   /match          — compare a live deal's fingerprint against history,
                     return a winning/losing/neutral verdict
 
-Deliberately NOT ported: the CPP-W/V profile stores. Canon (Track D-3):
-the CPA is the profile-building authority and the mirror is the store.
-Only the customer-style profile (CPP-S) lives here — it is derived from
-deal threads, which is this service's domain.
+Deliberately NOT here: any CPP profile store. Canon (three-engine rule,
+2026-07-11): the CPA is the ONLY profile-building authority — including
+CPP-S, which briefly lived in this module and moved to the CPA. /match
+CONSUMES the contact's CPP-S from the CPA (CPA_URL + CPA_API_KEY env,
+GET /profiles/s/{email}, fail-open) but never builds or stores profiles.
 
 Storage: Railway Postgres via DATABASE_URL. When unset, every endpoint
 returns 503 and the rest of TrueGraph (stateless graph compute) works
@@ -100,28 +100,6 @@ def init_schema() -> None:
       CREATE INDEX IF NOT EXISTS idx_contacts_domain ON contacts(domain);
       CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);
 
-      CREATE TABLE IF NOT EXISTS profiles_s (
-        id SERIAL PRIMARY KEY,
-        contact_id INTEGER NOT NULL REFERENCES contacts(id),
-        source_id INTEGER REFERENCES sources(id),
-        avg_response_hours NUMERIC,
-        avg_message_length INTEGER DEFAULT 0,
-        avg_detail_level NUMERIC,
-        initiative_rate NUMERIC,
-        question_rate NUMERIC,
-        stakeholder_intro_rate NUMERIC,
-        formality_score NUMERIC,
-        engagement_trajectory TEXT,
-        typical_thread_length INTEGER DEFAULT 0,
-        typical_thread_duration_days INTEGER DEFAULT 0,
-        profile_json JSONB DEFAULT '{}',
-        email_count INTEGER DEFAULT 0,
-        thread_count INTEGER DEFAULT 0,
-        version TEXT DEFAULT '1.0',
-        built_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_ps_contact ON profiles_s(contact_id);
-
       CREATE TABLE IF NOT EXISTS deal_outcomes (
         id SERIAL PRIMARY KEY,
         source_id INTEGER REFERENCES sources(id),
@@ -204,15 +182,6 @@ class ContactIn(BaseModel):
     contact_type: Optional[str] = None
 
 
-class ProfileSIn(BaseModel):
-    email: Optional[str] = None
-    name: Optional[str] = None
-    company: Optional[str] = None
-    source_key: Optional[str] = None
-    source_name: Optional[str] = None
-    profile: dict = {}
-
-
 class OutcomeIn(BaseModel):
     source_key: Optional[str] = None
     source_name: Optional[str] = None
@@ -277,37 +246,30 @@ def search_contacts(domain: Optional[str] = None, company: Optional[str] = None)
     return {"contacts": []}
 
 
-@router.post("/api/profiles/s")
-def post_profile_s(body: ProfileSIn):
-    contact = find_or_create_contact({
-        "email": body.email, "name": body.name,
-        "company": body.company, "contact_type": "external",
-    })
-    source = find_or_create_source(body.source_key, body.source_name) if body.source_key else None
-    p = body.profile or {}
-    rows = _q(
-        "INSERT INTO profiles_s (contact_id, source_id, avg_response_hours, avg_message_length, "
-        "avg_detail_level, initiative_rate, question_rate, stakeholder_intro_rate, formality_score, "
-        "engagement_trajectory, typical_thread_length, typical_thread_duration_days, profile_json, "
-        "email_count, thread_count, version) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-        (contact["id"], source["id"] if source else None,
-         p.get("avg_response_hours"), p.get("avg_message_length") or 0,
-         p.get("avg_detail_level"), p.get("initiative_rate"), p.get("question_rate"),
-         p.get("stakeholder_intro_rate"), p.get("formality_score"),
-         p.get("engagement_trajectory"), p.get("typical_thread_length"),
-         p.get("typical_thread_duration_days"), json.dumps(p.get("raw") or p),
-         p.get("email_count") or 0, p.get("thread_count") or 0, p.get("version") or "1.0"),
-    )
-    return {"profile": rows[0], "contact": contact}
+# CPP-S consumption — the CPA builds and stores customer-style profiles;
+# we fetch the latest at match time. Fail-open: outcome intelligence
+# enriches verdicts, a CPA outage never blocks them.
+
+CPA_URL = os.getenv("CPA_URL", "")
+CPA_API_KEY = os.getenv("CPA_API_KEY", "")
 
 
-@router.get("/api/profiles/s/{email}")
-def get_profile_s(email: str):
-    contact = find_or_create_contact({"email": email})
-    rows = _q("SELECT * FROM profiles_s WHERE contact_id = %s ORDER BY built_at DESC LIMIT 1",
-              (contact["id"],))
-    return {"profile": rows[0] if rows else None, "contact": contact}
+def _fetch_customer_profile(email: str) -> Optional[dict]:
+    if not CPA_URL or not email:
+        return None
+    try:
+        import httpx
+        headers = {"X-API-Key": CPA_API_KEY} if CPA_API_KEY else {}
+        resp = httpx.get(
+            f"{CPA_URL.rstrip('/')}/profiles/s/{email.strip().lower()}",
+            headers=headers, timeout=5,
+        )
+        if resp.status_code == 200:
+            return (resp.json() or {}).get("profile")
+        log.warning("CPA /profiles/s returned %s for %s", resp.status_code, email)
+    except Exception as e:
+        log.warning("CPA profile fetch failed for %s: %s", email, e)
+    return None
 
 
 @router.post("/api/outcomes")
@@ -420,9 +382,7 @@ def match_pattern(body: MatchIn):
         })
         if contact:
             results["same_contact"] = _same_contact_deals(contact["id"], body.exclude_deal_id)
-            rows = _q("SELECT * FROM profiles_s WHERE contact_id = %s ORDER BY built_at DESC LIMIT 1",
-                      (contact["id"],))
-            results["customer_profile"] = rows[0] if rows else None
+            results["customer_profile"] = _fetch_customer_profile(body.contact_email)
 
     if body.company:
         results["same_company"] = _same_company_deals(body.company, body.exclude_deal_id)
@@ -556,7 +516,6 @@ def _build_verdict(results: dict, fp: dict) -> dict:
 def outcomes_health():
     rows = _q(
         "SELECT (SELECT COUNT(*) FROM contacts) as contacts, "
-        "(SELECT COUNT(*) FROM profiles_s) as profiles_s, "
         "(SELECT COUNT(*) FROM deal_outcomes) as deal_outcomes, "
         "(SELECT COUNT(*) FROM deal_outcomes WHERE outcome = 'won') as deals_won, "
         "(SELECT COUNT(*) FROM deal_outcomes WHERE outcome = 'lost') as deals_lost, "
